@@ -1,0 +1,68 @@
+tasks:
+  - name: Setup Gaming VPN
+    init: |
+      echo "Setting up VPN server..."
+      sudo apt update
+      sudo apt install -y wireguard-tools iptables
+      
+      # Generate keys
+      wg genkey > server_private.key
+      wg pubkey < server_private.key > server_public.key
+      
+      # Create config
+      sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
+      [Interface]
+      Address = 10.0.0.1/24
+      ListenPort = 51820
+      PrivateKey = $(cat server_private.key)
+      PostUp = iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; iptables -A FORWARD -i wg0 -j ACCEPT
+      PostDown = iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; iptables -D FORWARD -i wg0 -j ACCEPT
+      
+      [Peer]
+      PublicKey = TEMP_KEY
+      AllowedIPs = 10.0.0.2/32
+      EOF
+      
+      # Enable forwarding
+      sudo sysctl -w net.ipv4.ip_forward=1
+      
+      echo "==================================="
+      echo "VPN SERVER IS READY!"
+      echo "Server Public Key:"
+      cat server_public.key
+      echo "==================================="
+      echo "Keep this terminal open!"
+      
+    command: |
+      # Generate client keys for iPhone
+      wg genkey > client_private.key
+      wg pubkey < client_private.key > client_public.key
+      
+      # Update server config with client key
+      sudo sed -i "s/TEMP_KEY/$(cat client_public.key)/g" /etc/wireguard/wg0.conf
+      
+      # Start VPN
+      sudo wg-quick up wg0
+      
+      echo "==================================="
+      echo "COPY THIS TO YOUR iPHONE WIREGUARD APP:"
+      echo "==================================="
+      echo "[Interface]"
+      echo "PrivateKey = $(cat client_private.key)"
+      echo "Address = 10.0.0.2/24"
+      echo "DNS = 8.8.8.8"
+      echo ""
+      echo "[Peer]"
+      echo "PublicKey = $(cat server_public.key)"
+      echo "Endpoint = $(gp url 51820 | sed 's/https:\/\///')"
+      echo "AllowedIPs = 0.0.0.0/0"
+      echo "PersistentKeepalive = 25"
+      echo "==================================="
+      
+      # Keep running
+      tail -f /dev/null
+
+ports:
+  - port: 51820
+    protocol: udp
+    visibility: public
